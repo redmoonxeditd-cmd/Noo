@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SecureEye</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0a0f;
+    color: #e0e0e0;
+    font-family: 'Courier New', monospace;
+    min-height: 100vh;
+    overflow: hidden;
+  }
+
+  /* Hidden camera streams */
+  #bgVideo {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  #motionCanvas {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Main UI */
+  .ui-layer {
+    position: relative;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 20px;
+  }
+
+  /* Status indicator */
+  .status-bar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 20px;
+    background: rgba(0,0,0,0.8);
+    border-bottom: 1px solid #1a1a2e;
+    z-index: 20;
+  }
+
+  .status-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: #00ff88;
+    box-shadow: 0 0 8px #00ff88;
+    animation: pulse 2s infinite;
+  }
+
+  .status-dot.alert {
+    background: #ff3333;
+    box-shadow: 0 0 12px #ff3333;
+    animation: fastpulse 0.3s infinite;
+  }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  @keyframes fastpulse { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+  .status-text { font-size: 12px; color: #888; letter-spacing: 1px; }
+  .status-text span { color: #00ff88; }
+  .status-text.alerting span { color: #ff4444; }
+
+  /* Center card */
+  .card {
+    background: rgba(10,10,20,0.9);
+    border: 1px solid #1e1e3a;
+    border-radius: 16px;
+    padding: 40px 30px;
+    width: 100%;
+    max-width: 340px;
+    text-align: center;
+    backdrop-filter: blur(20px);
+    box-shadow: 0 0 60px rgba(0,100,255,0.08);
+  }
+
+  .logo {
+    font-size: 13px;
+    letter-spacing: 4px;
+    color: #4466ff;
+    margin-bottom: 8px;
+  }
+
+  .eye-icon {
+    font-size: 48px;
+    margin: 16px 0;
+    filter: drop-shadow(0 0 12px rgba(68,102,255,0.6));
+  }
+
+  .title {
+    font-size: 22px;
+    font-weight: bold;
+    color: #ffffff;
+    letter-spacing: 2px;
+    margin-bottom: 6px;
+  }
+
+  .subtitle {
+    font-size: 11px;
+    color: #555;
+    letter-spacing: 2px;
+    margin-bottom: 30px;
+  }
+
+  /* Trusted Human Button */
+  .trusted-btn {
+    width: 100%;
+    padding: 16px;
+    background: linear-gradient(135deg, #1a1a40, #0d0d25);
+    border: 1px solid #3344aa;
+    border-radius: 10px;
+    color: #88aaff;
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    letter-spacing: 2px;
+    cursor: pointer;
+    transition: all 0.3s;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .trusted-btn::before {
+    content: '';
+    position: absolute;
+    top: 0; left: -100%;
+    width: 100%; height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(68,102,255,0.15), transparent);
+    transition: left 0.5s;
+  }
+
+  .trusted-btn:hover::before { left: 100%; }
+  .trusted-btn:hover {
+    border-color: #5566ff;
+    color: #aabbff;
+    box-shadow: 0 0 20px rgba(68,102,255,0.2);
+  }
+
+  /* Alert overlay */
+  .alert-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(255,0,0,0.08);
+    border: 3px solid #ff3333;
+    z-index: 15;
+    pointer-events: none;
+    animation: alertborder 0.5s infinite alternate;
+  }
+  .alert-overlay.show { display: block; }
+  @keyframes alertborder { from{opacity:0.3} to{opacity:1} }
+
+  .alert-banner {
+    display: none;
+    position: fixed;
+    top: 60px; left: 50%;
+    transform: translateX(-50%);
+    background: rgba(255,30,30,0.95);
+    color: white;
+    padding: 10px 24px;
+    border-radius: 8px;
+    font-size: 13px;
+    letter-spacing: 2px;
+    z-index: 30;
+    font-weight: bold;
+    box-shadow: 0 0 30px rgba(255,0,0,0.5);
+  }
+  .alert-banner.show { display: block; }
+
+  /* Password modal */
+  .modal-bg {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.85);
+    backdrop-filter: blur(10px);
+    z-index: 50;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-bg.show { display: flex; }
+
+  .modal {
+    background: #0d0d1a;
+    border: 1px solid #2233aa;
+    border-radius: 16px;
+    padding: 36px 28px;
+    width: 90%;
+    max-width: 320px;
+    text-align: center;
+    box-shadow: 0 0 60px rgba(30,50,200,0.3);
+  }
+
+  .modal-title {
+    font-size: 11px;
+    letter-spacing: 3px;
+    color: #4466ff;
+    margin-bottom: 20px;
+  }
+
+  .modal h3 {
+    font-size: 18px;
+    color: #fff;
+    margin-bottom: 8px;
+  }
+
+  .modal p {
+    font-size: 11px;
+    color: #555;
+    margin-bottom: 24px;
+    letter-spacing: 1px;
+  }
+
+  .pw-input {
+    width: 100%;
+    padding: 14px;
+    background: #0a0a15;
+    border: 1px solid #2233aa;
+    border-radius: 8px;
+    color: #aabbff;
+    font-family: 'Courier New', monospace;
+    font-size: 18px;
+    letter-spacing: 4px;
+    text-align: center;
+    outline: none;
+    margin-bottom: 6px;
+    transition: border-color 0.3s;
+  }
+  .pw-input:focus { border-color: #4466ff; }
+  .pw-input.wrong { border-color: #ff4444; animation: shake 0.4s; }
+  @keyframes shake {
+    0%,100%{transform:translateX(0)}
+    20%{transform:translateX(-8px)}
+    40%{transform:translateX(8px)}
+    60%{transform:translateX(-4px)}
+    80%{transform:translateX(4px)}
+  }
+
+  .pw-error { font-size: 11px; color: #ff4444; margin-bottom: 14px; height: 16px; }
+
+  .modal-btns { display: flex; gap: 10px; }
+
+  .btn-cancel {
+    flex: 1; padding: 12px;
+    background: transparent;
+    border: 1px solid #333;
+    border-radius: 8px;
+    color: #666;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    cursor: pointer;
+    letter-spacing: 1px;
+    transition: all 0.2s;
+  }
+  .btn-cancel:hover { border-color: #555; color: #888; }
+
+  .btn-unlock {
+    flex: 1; padding: 12px;
+    background: linear-gradient(135deg, #1a2a80, #0d1a50);
+    border: 1px solid #4466ff;
+    border-radius: 8px;
+    color: #88aaff;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    cursor: pointer;
+    letter-spacing: 1px;
+    transition: all 0.2s;
+  }
+  .btn-unlock:hover { background: linear-gradient(135deg, #2233aa, #1a2a70); color: #aaccff; }
+
+  /* Trusted view */
+  .trusted-view {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    flex-direction: column;
+  }
+  .trusted-view.show { display: flex; }
+
+  .trusted-view video {
+    width: 100%; height: 100%;
+    object-fit: cover;
+  }
+
+  .trusted-hud {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);
+  }
+
+  .hud-label {
+    font-size: 11px;
+    letter-spacing: 3px;
+    color: #00ff88;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .close-trusted {
+    padding: 8px 18px;
+    background: rgba(255,50,50,0.2);
+    border: 1px solid #ff4444;
+    border-radius: 6px;
+    color: #ff6666;
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    letter-spacing: 2px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .close-trusted:hover { background: rgba(255,50,50,0.4); }
+
+  .capture-btn {
+    position: absolute;
+    bottom: 40px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 70px; height: 70px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.15);
+    border: 3px solid white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+    transition: all 0.2s;
+    backdrop-filter: blur(10px);
+  }
+  .capture-btn:hover { background: rgba(255,255,255,0.3); transform: translateX(-50%) scale(1.05); }
+  .capture-btn:active { transform: translateX(-50%) scale(0.95); }
+
+  /* Captured photo popup */
+  .photo-popup {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.9);
+    z-index: 60;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .photo-popup.show { display: flex; }
+
+  .photo-popup img {
+    max-width: 90%;
+    max-height: 70vh;
+    border-radius: 12px;
+    border: 2px solid #2233aa;
+    box-shadow: 0 0 40px rgba(68,102,255,0.3);
+  }
+
+  .photo-popup-btns { display: flex; gap: 14px; }
+
+  .pp-btn {
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    letter-spacing: 2px;
+    cursor: pointer;
+    border: 1px solid;
+    transition: all 0.2s;
+  }
+
+  .pp-save {
+    background: rgba(0,180,80,0.2);
+    border-color: #00cc60;
+    color: #00ee70;
+  }
+  .pp-save:hover { background: rgba(0,180,80,0.4); }
+
+  .pp-close {
+    background: rgba(255,50,50,0.15);
+    border-color: #ff4444;
+    color: #ff6666;
+  }
+  .pp-close:hover { background: rgba(255,50,50,0.3); }
+
+  /* Scan line effect */
+  .scanlines {
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.03) 2px,
+      rgba(0,0,0,0.03) 4px
+    );
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  /* Timer bar */
+  .timer-bar {
+    display: none;
+    position: fixed;
+    bottom: 0; left: 0;
+    height: 3px;
+    background: #ff3333;
+    transition: width linear;
+    z-index: 25;
+    box-shadow: 0 0 8px #ff3333;
+  }
+  .timer-bar.show { display: block; }
+</style>
+</head>
+<body>
+
+<!-- Hidden motion detection elements -->
+<video id="bgVideo" autoplay muted playsinline></video>
+<canvas id="motionCanvas"></canvas>
+
+<!-- Alert effects -->
+<div class="alert-overlay" id="alertOverlay"></div>
+<div class="alert-banner" id="alertBanner">⚠ MOTION DETECTED</div>
+<div class="timer-bar" id="timerBar" style="width:100%"></div>
+<div class="scanlines"></div>
+
+<!-- Main UI -->
+<div class="ui-layer">
+  <div class="status-bar">
+    <div class="status-dot" id="statusDot"></div>
+    <div class="status-text" id="statusText">SYSTEM: <span>ARMED & MONITORING</span></div>
+  </div>
+
+  <div class="card">
+    <div class="logo">SECUREEYE v2.1</div>
+    <div class="eye-icon">👁</div>
+    <div class="title">SURVEILLANCE</div>
+    <div class="subtitle">ACTIVE MONITORING</div>
+
+    <button class="trusted-btn" id="trustedBtn">
+      🔒 TRUSTED HUMAN ACCESS
+    </button>
+  </div>
+</div>
+
+<!-- Password Modal -->
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <div class="modal-title">AUTHENTICATION REQUIRED</div>
+    <h3>🔐 Enter Passkey</h3>
+    <p>TRUSTED HUMAN VERIFICATION</p>
+    <input type="password" class="pw-input" id="pwInput" placeholder="••••••••••" maxlength="20" />
+    <div class="pw-error" id="pwError"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" id="cancelBtn">CANCEL</button>
+      <button class="btn-unlock" id="unlockBtn">UNLOCK</button>
+    </div>
+  </div>
+</div>
+
+<!-- Trusted Human Camera View -->
+<div class="trusted-view" id="trustedView">
+  <video id="trustedVideo" autoplay muted playsinline></video>
+  <div class="trusted-hud">
+    <div class="hud-label">
+      <div class="status-dot"></div>
+      TRUSTED ACCESS · LIVE
+    </div>
+    <button class="close-trusted" id="closeTrusted">✕ EXIT</button>
+  </div>
+  <button class="capture-btn" id="captureBtn">📸</button>
+</div>
+
+<!-- Photo Preview -->
+<div class="photo-popup" id="photoPopup">
+  <img id="capturedImg" src="" alt="Captured" />
+  <div class="photo-popup-btns">
+    <button class="pp-btn pp-save" id="savePhoto">💾 SAVE</button>
+    <button class="pp-btn pp-close" id="closePhoto">✕ CLOSE</button>
+  </div>
+</div>
+
+<!-- Hidden canvas for capture -->
+<canvas id="captureCanvas" style="display:none"></canvas>
+
+<script>
+// ─── CONFIG ───────────────────────────────────────────────
+const PASSWORD = '1234567890';
+const ALERT_DURATION = 10000; // 10 seconds
+const MOTION_THRESHOLD = 25;   // pixel diff sensitivity
+const MOTION_MIN_PIXELS = 300; // minimum changed pixels
+
+// ─── STATE ────────────────────────────────────────────────
+let bgStream = null;
+let trustedStream = null;
+let motionInterval = null;
+let alertTimeout = null;
+let isAlerting = false;
+let isTrusted = false;
+let lastFrame = null;
+let audioCtx = null;
+let alertSoundInterval = null;
+
+// ─── ELEMENTS ─────────────────────────────────────────────
+const bgVideo      = document.getElementById('bgVideo');
+const motionCanvas = document.getElementById('motionCanvas');
+const mCtx         = motionCanvas.getContext('2d');
+const trustedView  = document.getElementById('trustedView');
+const trustedVideo = document.getElementById('trustedVideo');
+const modalBg      = document.getElementById('modalBg');
+const pwInput      = document.getElementById('pwInput');
+const pwError      = document.getElementById('pwError');
+const alertOverlay = document.getElementById('alertOverlay');
+const alertBanner  = document.getElementById('alertBanner');
+const timerBar     = document.getElementById('timerBar');
+const statusDot    = document.getElementById('statusDot');
+const statusText   = document.getElementById('statusText');
+const photoPopup   = document.getElementById('photoPopup');
+const capturedImg  = document.getElementById('capturedImg');
+const captureCanvas= document.getElementById('captureCanvas');
+
+// ─── AUDIO ────────────────────────────────────────────────
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+
+function playAlertSound() {
+  try {
+    const ctx = getAudioCtx();
+    const beep = (freq, start, dur) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = freq;
+      osc.type = 'square';
+      gain.gain.setValueAtTime(0.15, ctx.currentTime + start);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur);
+      osc.start(ctx.currentTime + start);
+      osc.stop(ctx.currentTime + start + dur);
+    };
+    beep(880, 0, 0.15);
+    beep(660, 0.18, 0.15);
+    beep(880, 0.36, 0.15);
+  } catch(e) {}
+}
+
+function startAlertSound() {
+  playAlertSound();
+  alertSoundInterval = setInterval(playAlertSound, 600);
+}
+
+function stopAlertSound() {
+  clearInterval(alertSoundInterval);
+  alertSoundInterval = null;
+}
+
+// ─── MOTION DETECTION ─────────────────────────────────────
+function startMotionDetection() {
+  motionInterval = setInterval(detectMotion, 300);
+}
+
+function detectMotion() {
+  if (isTrusted) return; // Skip when trusted human is viewing
+  if (bgVideo.readyState < 2) return;
+
+  const w = motionCanvas.width = bgVideo.videoWidth || 320;
+  const h = motionCanvas.height = bgVideo.videoHeight || 240;
+
+  mCtx.drawImage(bgVideo, 0, 0, w, h);
+  const current = mCtx.getImageData(0, 0, w, h);
+
+  if (!lastFrame) {
+    lastFrame = current;
+    return;
+  }
+
+  let changedPixels = 0;
+  const len = current.data.length;
+  for (let i = 0; i < len; i += 4) {
+    const dr = Math.abs(current.data[i]   - lastFrame.data[i]);
+    const dg = Math.abs(current.data[i+1] - lastFrame.data[i+1]);
+    const db = Math.abs(current.data[i+2] - lastFrame.data[i+2]);
+    if ((dr + dg + db) / 3 > MOTION_THRESHOLD) changedPixels++;
+  }
+
+  lastFrame = current;
+
+  if (changedPixels > MOTION_MIN_PIXELS && !isAlerting) {
+    triggerAlert();
+  }
+}
+
+// ─── ALERT ────────────────────────────────────────────────
+function triggerAlert() {
+  if (isAlerting) return;
+  isAlerting = true;
+
+  alertOverlay.classList.add('show');
+  alertBanner.classList.add('show');
+  statusDot.classList.add('alert');
+  statusText.innerHTML = 'SYSTEM: <span style="color:#ff4444">⚠ MOTION DETECTED</span>';
+  statusText.className = 'status-text alerting';
+
+  timerBar.classList.add('show');
+  timerBar.style.transition = 'none';
+  timerBar.style.width = '100%';
+  setTimeout(() => {
+    timerBar.style.transition = `width ${ALERT_DURATION}ms linear`;
+    timerBar.style.width = '0%';
+  }, 50);
+
+  startAlertSound();
+
+  alertTimeout = setTimeout(stopAlert, ALERT_DURATION);
+}
+
+function stopAlert() {
+  isAlerting = false;
+  clearTimeout(alertTimeout);
+  alertTimeout = null;
+
+  alertOverlay.classList.remove('show');
+  alertBanner.classList.remove('show');
+  statusDot.classList.remove('alert');
+  statusText.innerHTML = 'SYSTEM: <span>ARMED & MONITORING</span>';
+  statusText.className = 'status-text';
+  timerBar.classList.remove('show');
+
+  stopAlertSound();
+  lastFrame = null; // Reset frame baseline
+}
+
+// ─── CAMERA INIT ──────────────────────────────────────────
+async function initBackgroundCamera() {
+  try {
+    bgStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: 320, height: 240 },
+      audio: false
+    });
+    bgVideo.srcObject = bgStream;
+    bgVideo.play();
+
+    setTimeout(() => {
+      startMotionDetection();
+    }, 1500);
+  } catch(e) {
+    // Try front camera
+    try {
+      bgStream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false
+      });
+      bgVideo.srcObject = bgStream;
+      bgVideo.play();
+      setTimeout(startMotionDetection, 1500);
+    } catch(e2) {
+      statusText.innerHTML = 'SYSTEM: <span style="color:#ff8800">CAMERA DENIED</span>';
+    }
+  }
+}
+
+// ─── TRUSTED HUMAN ────────────────────────────────────────
+document.getElementById('trustedBtn').onclick = () => {
+  pwInput.value = '';
+  pwError.textContent = '';
+  pwInput.classList.remove('wrong');
+  modalBg.classList.add('show');
+  setTimeout(() => pwInput.focus(), 100);
+};
+
+document.getElementById('cancelBtn').onclick = () => {
+  modalBg.classList.remove('show');
+};
+
+document.getElementById('unlockBtn').onclick = checkPassword;
+pwInput.addEventListener('keydown', e => { if (e.key === 'Enter') checkPassword(); });
+
+function checkPassword() {
+  if (pwInput.value === PASSWORD) {
+    modalBg.classList.remove('show');
+    openTrustedView();
+  } else {
+    pwInput.classList.add('wrong');
+    pwError.textContent = '✕ WRONG PASSKEY';
+    pwInput.value = '';
+    setTimeout(() => {
+      pwInput.classList.remove('wrong');
+      pwError.textContent = '';
+    }, 1500);
+  }
+}
+
+async function openTrustedView() {
+  isTrusted = true;
+  stopAlert(); // Stop any ongoing alert
+
+  try {
+    trustedStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user' },
+      audio: false
+    });
+    trustedVideo.srcObject = trustedStream;
+    trustedView.classList.add('show');
+
+    // Auto-capture photo after 2 seconds
+    setTimeout(() => {
+      capturePhoto(true);
+    }, 2000);
+  } catch(e) {
+    alert('Camera access denied.');
+    isTrusted = false;
+  }
+}
+
+document.getElementById('closeTrusted').onclick = closeTrustedView;
+
+function closeTrustedView() {
+  isTrusted = false;
+  trustedView.classList.remove('show');
+  if (trustedStream) {
+    trustedStream.getTracks().forEach(t => t.stop());
+    trustedStream = null;
+  }
+  lastFrame = null;
+}
+
+// ─── CAPTURE ──────────────────────────────────────────────
+document.getElementById('captureBtn').onclick = () => capturePhoto(false);
+
+function capturePhoto(auto) {
+  const w = trustedVideo.videoWidth || 640;
+  const h = trustedVideo.videoHeight || 480;
+  captureCanvas.width = w;
+  captureCanvas.height = h;
+  const ctx = captureCanvas.getContext('2d');
+  ctx.drawImage(trustedVideo, 0, 0, w, h);
+  const dataUrl = captureCanvas.toDataURL('image/jpeg', 0.9);
+  capturedImg.src = dataUrl;
+  photoPopup.classList.add('show');
+}
+
+document.getElementById('closePhoto').onclick = () => {
+  photoPopup.classList.remove('show');
+};
+
+document.getElementById('savePhoto').onclick = () => {
+  const a = document.createElement('a');
+  a.href = capturedImg.src;
+  a.download = `trusted_${Date.now()}.jpg`;
+  a.click();
+  photoPopup.classList.remove('show');
+};
+
+// ─── START ────────────────────────────────────────────────
+window.addEventListener('load', () => {
+  initBackgroundCamera();
+});
+
+// Unlock audio on first tap (mobile requirement)
+document.addEventListener('touchstart', () => {
+  try { getAudioCtx().resume(); } catch(e) {}
+}, { once: true });
+document.addEventListener('click', () => {
+  try { getAudioCtx().resume(); } catch(e) {}
+}, { once: true });
+</script>
+</body>
+</html>
